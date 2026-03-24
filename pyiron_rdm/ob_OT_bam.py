@@ -95,43 +95,73 @@ def murn_job_ot():
 
 # calls ______________________________________________________
 
+_JOB_TYPE_OT_MAP = [
+    ("lammps", lammps_job_ot),
+    ("vasp", vasp_job_ot),
+    ("murn", murn_job_ot),
+]
+
 
 def get_ot_info(cdict):
     if "structure_name" in cdict.keys():
         return crystal_struct_ot()
     elif "job_type" in cdict.keys():
-        if "lammps" in cdict["job_type"].lower():
-            return lammps_job_ot()
-        elif "vasp" in cdict["job_type"].lower():
-            return vasp_job_ot()
-        elif "murn" in cdict["job_type"].lower():
-            return murn_job_ot()
-        else:
-            return pyiron_job_ot()
+        job_type = cdict["job_type"].lower()
+        for pattern, ot_func in _JOB_TYPE_OT_MAP:
+            if pattern in job_type:
+                return ot_func()
+        return pyiron_job_ot()
     else:
         raise ValueError(
             "Neither structure_name nor job_type in conceptual dictionary. Cannot proceed."
         )
 
 
-def get_inv_parent(parent_name, cdict, props_dict, options):
-    ob_type, permids, where_clause, requested_attrs, ob_code = "", "", {}, [], ""
-    if parent_name == "material":
-        ob_type, permids, where_clause, requested_attrs = material_par(
-            props_dict, options
-        )
-    elif parent_name == "compute_resource":
-        ob_type, ob_code = compresource_par(cdict)
-    elif parent_name == "software":
-        ob_type, ob_code = sw_par(cdict)
-    elif parent_name == "interatomic_potential":
-        ob_type, where_clause, requested_attrs = intpot_par(cdict)
-    elif parent_name == "pseudopotential":
-        ob_type, parents = pseudopot_par(options)
-    elif parent_name == "wf_reference":
-        ob_type, ob_code = wfref_par(cdict)
+def _inv_parent_material(cdict, props_dict, options):
+    ob_type, permids, where_clause, requested_attrs = material_par(props_dict, options)
+    return ob_type, permids, where_clause, requested_attrs, ""
 
-    return ob_type, permids, where_clause, requested_attrs, ob_code
+
+def _inv_parent_compute_resource(cdict, props_dict, options):
+    ob_type, ob_code = compresource_par(cdict)
+    return ob_type, "", {}, [], ob_code
+
+
+def _inv_parent_software(cdict, props_dict, options):
+    ob_type, ob_code = sw_par(cdict)
+    return ob_type, "", {}, [], ob_code
+
+
+def _inv_parent_interatomic_potential(cdict, props_dict, options):
+    ob_type, where_clause, requested_attrs = intpot_par(cdict)
+    return ob_type, "", where_clause, requested_attrs, ""
+
+
+def _inv_parent_pseudopotential(cdict, props_dict, options):
+    ob_type, permids = pseudopot_par(options)
+    return ob_type, permids, {}, [], ""
+
+
+def _inv_parent_wf_reference(cdict, props_dict, options):
+    ob_type, ob_code = wfref_par(cdict)
+    return ob_type, "", {}, [], ob_code
+
+
+_PARENT_HANDLERS = {
+    "material": _inv_parent_material,
+    "compute_resource": _inv_parent_compute_resource,
+    "software": _inv_parent_software,
+    "interatomic_potential": _inv_parent_interatomic_potential,
+    "pseudopotential": _inv_parent_pseudopotential,
+    "wf_reference": _inv_parent_wf_reference,
+}
+
+
+def get_inv_parent(parent_name, cdict, props_dict, options):
+    handler = _PARENT_HANDLERS.get(parent_name)
+    if handler:
+        return handler(cdict, props_dict, options)
+    return "", "", {}, [], ""
 
 
 # upload options ______________________________________________

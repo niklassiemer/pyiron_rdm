@@ -1,5 +1,45 @@
 import ast
 import json
+import warnings
+
+_ASMO = "http://purls.helmholtz-metadaten.de/asmo"
+
+_MIN_ALGO_MAP = {
+    "fire": "MIN_ALGO_FIRE",
+    "cg": "MIN_ALGO_CG",
+    "hftn": "MIN_ALGO_HFTN",
+    "lbfgs": "MIN_ALGO_LBFGS",
+    "quickmin": "MIN_ALGO_QUICKMIN",
+    "sd": "MIN_ALGO_STEEP_DESC",
+}
+
+_IONIC_MIN_ALGO_MAP = {
+    "rmm-diis": "MIN_ALGO_RMM_DIIS",
+    "cg": "MIN_ALGO_CG",
+    "damped_md": "MIN_ALGO_DAMPED_MD",
+}
+
+_MD_ENSEMBLE_MAP = {
+    f"{_ASMO}/MicrocanonicalEnsemble": ("microcanonical ensemble", "TD_ENSEMBLE_NVE"),
+    f"{_ASMO}/CanonicalEnsemble": ("canonical ensemble", "TD_ENSEMBLE_ATOM_ENS_NVT"),
+    f"{_ASMO}/IsothermalIsobaricEnsemble": (
+        "isothermal-isobaric ensemble",
+        "TD_ENSEMBLE_NPT",
+    ),
+}
+
+_EOS_MAP = {
+    f"{_ASMO}/BirchMurnaghan": "EOS_BIRCH_MURNAGHAN",
+    f"{_ASMO}/Murnaghan": "EOS_MURNAGHAN",
+    f"{_ASMO}/Vinet": "EOS_VINET",
+    f"{_ASMO}/PolynomialFit": "EOS_POLYNOMIAL",
+}
+
+_XC_FUNCTIONAL_MAP = {
+    "LDA": "XC_FUNC_LDA",
+    "PBE": "XC_FUNC_PBE",
+    "GGA": "XC_FUNC_PBE",
+}
 
 
 def format_json_string(json_string):
@@ -21,7 +61,6 @@ def revert_json_string_formatting(formated_json_string):
 
 def map_cdict_to_ob(user_name, cdict, concept_dict):
 
-    asmo = "http://purls.helmholtz-metadaten.de/asmo"
     # cdict = flat concept_dict
 
     props = {}
@@ -93,25 +132,17 @@ def map_cdict_to_ob(user_name, cdict, concept_dict):
 
         if "dof" in cdict:
             props |= {
-                "atom_cell_vol_relax": f"{asmo}/CellVolumeRelaxation" in cdict["dof"],
-                "atom_cell_shp_relax": f"{asmo}/CellShapeRelaxation" in cdict["dof"],
-                "atom_pos_relax": f"{asmo}/AtomicPositionRelaxation" in cdict["dof"],
+                "atom_cell_vol_relax": f"{_ASMO}/CellVolumeRelaxation" in cdict["dof"],
+                "atom_cell_shp_relax": f"{_ASMO}/CellShapeRelaxation" in cdict["dof"],
+                "atom_pos_relax": f"{_ASMO}/AtomicPositionRelaxation" in cdict["dof"],
             }
         if "molecular_statics" in concept_dict and "minimization_algorithm" in cdict:
             description = (
                 f'{cdict["job_type"]} simulation using pyiron for energy minimization/structural optimization.'
                 + props["description_multiline"]
             )  # TODO double check correctness
-            try:
-                min_algo = {
-                    "fire": "MIN_ALGO_FIRE",
-                    "cg": "MIN_ALGO_CG",
-                    "hftn": "MIN_ALGO_HFTN",
-                    "lbfgs": "MIN_ALGO_LBFGS",
-                    "quickmin": "MIN_ALGO_QUICKMIN",
-                    "sd": "MIN_ALGO_STEEP_DESC",
-                }[cdict["minimization_algorithm"]]
-            except KeyError:
+            min_algo = _MIN_ALGO_MAP.get(cdict["minimization_algorithm"])
+            if min_algo is None:
                 raise ValueError("Unknown minimization algorithm")
             props |= {
                 "atomistic_calc_type": "atom_calc_struc_opt",
@@ -124,24 +155,14 @@ def map_cdict_to_ob(user_name, cdict, concept_dict):
             ):
                 props["atom_targ_press_in_gpa"] = cdict["target_pressure"]
         if "molecular_dynamics" in concept_dict.keys():
-            if f"{asmo}/MicrocanonicalEnsemble" in cdict["ensemble"]:
-                description = (
-                    f'{cdict["job_type"]} simulation using pyiron for microcanonical ensemble.'
-                    + props["description_multiline"]
-                )
-                props["atom_md_ensemble"] = "TD_ENSEMBLE_NVE"
-            elif "{asmo}CanonicalEnsemble" in cdict["ensemble"]:
-                description = (
-                    f'{cdict["job_type"]} simulation using pyiron for canonical ensemble.'
-                    + props["description_multiline"]
-                )
-                props["atom_md_ensemble"] = "TD_ENSEMBLE_ATOM_ENS_NVT"
-            elif f"{asmo}/IsothermalIsobaricEnsemble" in cdict["ensemble"]:
-                description = (
-                    f'{cdict["job_type"]} simulation using pyiron for isothermal-isobaric ensemble.'
-                    + props["description_multiline"]
-                )  # TODO double check correctness
-                props["atom_md_ensemble"] = "TD_ENSEMBLE_NPT"
+            for ensemble_url, (ensemble_desc, ensemble_code) in _MD_ENSEMBLE_MAP.items():
+                if ensemble_url in cdict["ensemble"]:
+                    description = (
+                        f'{cdict["job_type"]} simulation using pyiron for {ensemble_desc}.'
+                        + props["description_multiline"]
+                    )
+                    props["atom_md_ensemble"] = ensemble_code
+                    break
             props |= {
                 "atomistic_calc_type": "Atom_calc_md",
                 "description_multiline": description,
@@ -175,35 +196,24 @@ def map_cdict_to_ob(user_name, cdict, concept_dict):
                 + props["description_multiline"]
             )
         if "equation_of_state_fit" in cdict.keys():
-            if cdict["equation_of_state_fit"] == f"{asmo}/BirchMurnaghan":
-                props["murn_eqn_of_state"] = "EOS_BIRCH_MURNAGHAN"
-            elif cdict["equation_of_state_fit"] == f"{asmo}/Murnaghan":
-                props["murn_eqn_of_state"] = "EOS_MURNAGHAN"
-            elif cdict["equation_of_state_fit"] == f"{asmo}/Vinet":
-                props["murn_eqn_of_state"] = "EOS_VINET"
-            elif cdict["equation_of_state_fit"] == f"{asmo}/PolynomialFit":
-                props["murn_eqn_of_state"] = "EOS_POLYNOMIAL"
-                props["murn_fit_eqn_order"] = cdict["fit_order"]
+            eos = cdict["equation_of_state_fit"]
+            eos_val = _EOS_MAP.get(eos)
+            if eos_val:
+                props["murn_eqn_of_state"] = eos_val
+                if eos == f"{_ASMO}/PolynomialFit":
+                    props["murn_fit_eqn_order"] = cdict["fit_order"]
             else:
-                import warnings
-
                 warnings.warn("Unknown equation of state")
 
         if cdict.get("energy_cutoff"):
             props["atom_e_cutoff_in_ev"] = cdict["energy_cutoff"]
         if "xc_functional" in cdict.keys():
-            if cdict["xc_functional"] == "LDA":
-                props["atom_xc_functional"] = "XC_FUNC_LDA"
-            elif cdict["xc_functional"] in (
-                "PBE",
-                "GGA",
-            ):  # TODO: this needs attention and better resolving
-                props["atom_xc_functional"] = "XC_FUNC_PBE"
+            xc_val = _XC_FUNCTIONAL_MAP.get(cdict["xc_functional"])
+            if xc_val:
+                props["atom_xc_functional"] = xc_val
             else:
-                import warnings
-
                 warnings.warn(
-                    f"XC functional '{props['atom_xc_functional']}' is not yet mapped."
+                    f"XC functional '{cdict['xc_functional']}' is not yet mapped."
                 )
 
         if "electronic_smearing" in cdict.keys():
@@ -233,11 +243,7 @@ def map_cdict_to_ob(user_name, cdict, concept_dict):
                     f'{cdict["job_type"]} simulation using pyiron for energy minimization/structural optimization.'
                     + props["description_multiline"]
                 )  # TODO double check correctness
-                min_algo = {
-                    "rmm-diis": "MIN_ALGO_RMM_DIIS",
-                    "cg": "MIN_ALGO_CG",
-                    "damped_md": "MIN_ALGO_DAMPED_MD",
-                }.get(cdict["ionic_minimization_algorithm"])
+                min_algo = _IONIC_MIN_ALGO_MAP.get(cdict["ionic_minimization_algorithm"])
                 if min_algo:
                     props |= {
                         "atomistic_calc_type": "atom_calc_struc_opt",
@@ -252,8 +258,6 @@ def map_cdict_to_ob(user_name, cdict, concept_dict):
                 elec_min_algo = "MIN_ALGO_RMM_DIIS"
                 props |= {"atom_elec_min_algo": elec_min_algo}
             else:
-                import warnings
-
                 warnings.warn(
                     f"Electronic minimization algorithm for ALGO='{cdict.get('electronic_minimization_algorithm')}' not yet mapped."
                 )
