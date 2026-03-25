@@ -192,7 +192,7 @@ def openbis_login(
     instance_cfg = SUPPORTED_INSTANCES[instance]
     if instance_cfg["requires_s3"] and not s3_config_path:
         raise ValueError(
-            "s3_config_path must be provided when uploading to sfb1394 instance."
+            "s3_config_path must be provided when uploading to {instance!r} instance."
         )
     mapping_path = instance_cfg["mapping_path"]
     OT_path = instance_cfg["OT_path"]
