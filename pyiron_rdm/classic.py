@@ -1,16 +1,44 @@
 import hashlib
+import types
+from dataclasses import dataclass
+
+from pyiron_rdm import ob_OT_bam, ob_OT_sfb1394, ob_cfg_bam, ob_cfg_sfb1394
+
+
+@dataclass
+class InstancePlugin:
+    """Plugin containing instance-specific configuration for an openBIS instance.
+
+    To support a new openBIS instance, create an ``InstancePlugin`` with the
+    appropriate *mapping* and *ot* modules and register it in
+    :data:`SUPPORTED_INSTANCES`.
+
+    Attributes:
+        mapping: Module implementing the property-mapping interface
+            (``map_cdict_to_ob``, ``map_struct_to_ob``, ``dataset_job_h5``,
+            ``dataset_atom_struct_h5``, ``dataset_env_yml``,
+            ``dataset_cdict_jsonld``).
+        ot: Module implementing the object-type interface
+            (``get_ot_info``, ``get_inv_parent``, ``validate_options``).
+        requires_s3: Whether uploads to this instance require S3 storage.
+    """
+
+    mapping: types.ModuleType
+    ot: types.ModuleType
+    requires_s3: bool = False
+
 
 SUPPORTED_INSTANCES = {
-    "bam": {
-        "mapping_path": "pyiron_rdm.ob_cfg_bam",
-        "OT_path": "pyiron_rdm.ob_OT_bam",
-        "requires_s3": False,
-    },
-    "sfb1394": {
-        "mapping_path": "pyiron_rdm.ob_cfg_sfb1394",
-        "OT_path": "pyiron_rdm.ob_OT_sfb1394",
-        "requires_s3": True,
-    },
+    "bam": InstancePlugin(
+        mapping=ob_cfg_bam,
+        ot=ob_OT_bam,
+        requires_s3=False,
+    ),
+    "sfb1394": InstancePlugin(
+        mapping=ob_cfg_sfb1394,
+        ot=ob_OT_sfb1394,
+        requires_s3=True,
+    ),
 }
 
 
@@ -172,10 +200,8 @@ def get_datamodel(o):
     )
 
 
-def validate_upload_options(ot_module: str, options: dict):
-    import importlib
-
-    importlib.import_module(ot_module).validate_options(**options)
+def validate_upload_options(ot, options: dict):
+    ot.validate_options(**options)
 
     if "materials" in options and not isinstance(options["materials"], list):
         options["materials"] = [options["materials"]]
@@ -196,13 +222,11 @@ def openbis_login(
         )
 
     instance_cfg = SUPPORTED_INSTANCES[instance]
-    if instance_cfg["requires_s3"] and not s3_config_path:
+    if instance_cfg.requires_s3 and not s3_config_path:
         raise ValueError(
             f"s3_config_path must be provided when uploading to {instance!r} instance."
         )
-    mapping_path = instance_cfg["mapping_path"]
-    OT_path = instance_cfg["OT_path"]
-    if not instance_cfg["requires_s3"]:
+    if not instance_cfg.requires_s3:
         s3_config_path = None
 
     from pyiron_rdm.ob_upload import openbis_login as ob_login
@@ -213,8 +237,7 @@ def openbis_login(
         password=password,
         token=token,
         s3_config_path=s3_config_path,
-        mapping_path=mapping_path,
-        OT_path=OT_path,
+        plugin=instance_cfg,
     )
     return o
 
@@ -307,7 +330,7 @@ def create_concept_dicts(
 ):
     # TODO should this return anything?
     if options is not None:
-        options = validate_upload_options(o.ot, options)
+        options = validate_upload_options(o.plugin.ot, options)
     else:
         options = {}
 

@@ -5,8 +5,7 @@ import warnings
 
 def openbis_login(
     url: str,
-    mapping_path: str,
-    OT_path: str,
+    plugin,
     username: str | None = None,
     password: str | None = None,
     token: str | None = None,
@@ -41,23 +40,7 @@ def openbis_login(
         else:
             o.set_token(token)
 
-    o.mapping = mapping_path
-    o.ot = OT_path
-
-    import importlib
-
-    module_spec = importlib.util.find_spec(o.mapping)
-    if not module_spec:
-        raise FileNotFoundError(
-            f"There is no openBIS '{o.mapping}' mapping file in your pyiron resources. "
-            "Please correct this before upload."
-        )  # TODO correct the o.mapping here to just filename after pyiron_resources thing set up
-    module_spec = importlib.util.find_spec(o.ot)
-    if not module_spec:
-        raise FileNotFoundError(
-            f"There is no openBIS '{o.ot}' object type file in your pyiron resources. "
-            "Please correct this before upload."
-        )  # TODO correct the o.ot here to just filename after pyiron_resources thing set up
+    o.plugin = plugin
 
     return o
 
@@ -70,10 +53,8 @@ def openbis_validate(
         from pyiron_rdm.concept_dict import flatten_cdict
 
         cdict = flatten_cdict(concept_dict)
-        from importlib import import_module
-
-        object_type, ds_types, inv_parents = import_module(o.ot).get_ot_info(cdict)
-        props_dict = import_module(o.mapping).map_cdict_to_ob(
+        object_type, ds_types, inv_parents = o.plugin.ot.get_ot_info(cdict)
+        props_dict = o.plugin.mapping.map_cdict_to_ob(
             user_name=o.get_session_info().userName,
             cdict=cdict,
             concept_dict=concept_dict,
@@ -179,8 +160,6 @@ def openbis_upload_validated(
     )
     object_.save()
 
-    from importlib import import_module
-
     for ds in ds_types:
         if ds not in _DS_TYPE_CONFIG:
             raise ValueError(
@@ -188,7 +167,7 @@ def openbis_upload_validated(
                 + ", ".join(_DS_TYPE_CONFIG.keys()) + "."
             )
         method_name, get_file_path = _DS_TYPE_CONFIG[ds]
-        ds_type, ds_props = getattr(import_module(o.mapping), method_name)(cdict)
+        ds_type, ds_props = getattr(o.plugin.mapping, method_name)(cdict)
         file_path = get_file_path(cdict)
 
         try:
@@ -305,10 +284,8 @@ def validate_ob_destination(o, space: str, project: str, collection: str):
 def validate_inventory_parents(
     o, inv_parents, cdict, props_dict, options, require_parents: bool = True
 ):
-    import importlib
-
     ob_parents = []
-    get_inv_parent = importlib.import_module(o.ot).get_inv_parent
+    get_inv_parent = o.plugin.ot.get_inv_parent
     issues = []
     for inv_parent in inv_parents:
         ob_type, permids, where, attrs, code = get_inv_parent(
