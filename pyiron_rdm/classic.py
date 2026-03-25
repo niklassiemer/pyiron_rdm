@@ -105,6 +105,7 @@ def classic_murn(murn_job, export_env_file):
         export_env(murn_job.path)
 
     from pyiron_rdm.concept_dict import (
+        process_general_job,
         process_lammps_job,
         process_murnaghan_job,
         process_vasp_job,
@@ -127,7 +128,12 @@ def classic_murn(murn_job, export_env_file):
                 child_cdict = processor(job)
                 break
         else:
-            child_cdict = process_vasp_job(job)
+            raise ValueError(
+                f"Child job type {job_type!r} is not supported in Murnaghan workflow."
+                " Supported child job types: "
+                + ", ".join(p for p, _ in _child_job_processors)
+                + "."
+            )
         child_jobs_cdict.append(child_cdict)
 
     job_cdict = process_murnaghan_job(murn_job)
@@ -192,7 +198,7 @@ def openbis_login(
     instance_cfg = SUPPORTED_INSTANCES[instance]
     if instance_cfg["requires_s3"] and not s3_config_path:
         raise ValueError(
-            "s3_config_path must be provided when uploading to {instance!r} instance."
+            f"s3_config_path must be provided when uploading to {instance!r} instance."
         )
     mapping_path = instance_cfg["mapping_path"]
     OT_path = instance_cfg["OT_path"]
