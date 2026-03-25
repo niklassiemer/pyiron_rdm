@@ -102,6 +102,30 @@ def openbis_validate(
     return outputs
 
 
+_DS_TYPE_CONFIG = {
+    "job_h5": (
+        "dataset_job_h5",
+        lambda cdict: cdict["path"] + ".h5",
+    ),
+    "structure_h5": (
+        "dataset_atom_struct_h5",
+        lambda cdict: cdict["path"] + cdict["structure_name"] + ".h5",
+    ),
+    "env_yml": (
+        "dataset_env_yml",
+        lambda cdict: cdict["path"] + "_environment.yml",
+    ),
+    "cdict_json": (
+        "dataset_cdict_jsonld",
+        lambda cdict: (
+            cdict["path"] + cdict["structure_name"] + "_concept_dict.json"
+            if "structure_name" in cdict
+            else cdict["path"] + "_concept_dict.json"
+        ),
+    ),
+}
+
+
 def openbis_upload_validated(
     o,
     space,
@@ -158,28 +182,14 @@ def openbis_upload_validated(
     from importlib import import_module
 
     for ds in ds_types:
-        if ds == "job_h5":
-            ds_type, ds_props = import_module(o.mapping).dataset_job_h5(cdict)
-            file_path = cdict["path"] + ".h5"
-        elif ds == "structure_h5":
-            ds_type, ds_props = import_module(o.mapping).dataset_atom_struct_h5(cdict)
-            file_path = cdict["path"] + cdict["structure_name"] + ".h5"
-        elif ds == "env_yml":
-            ds_type, ds_props = import_module(o.mapping).dataset_env_yml(cdict)
-            file_path = cdict["path"] + "_environment.yml"
-        elif ds == "cdict_json":
-            ds_type, ds_props = import_module(o.mapping).dataset_cdict_jsonld(cdict)
-            if "structure_name" in cdict.keys():
-                file_path = (
-                    cdict["path"] + cdict["structure_name"] + "_concept_dict.json"
-                )
-            else:
-                file_path = cdict["path"] + "_concept_dict.json"
-        else:
+        if ds not in _DS_TYPE_CONFIG:
             raise ValueError(
-                f"Dataset type {ds} not recognised. Supported datasets: job_h5,"
-                " structure_h5, env_yml, cdict_json."
+                f"Dataset type {ds!r} not recognised. Supported datasets: "
+                + ", ".join(_DS_TYPE_CONFIG.keys()) + "."
             )
+        method_name, get_file_path = _DS_TYPE_CONFIG[ds]
+        ds_type, ds_props = getattr(import_module(o.mapping), method_name)(cdict)
+        file_path = get_file_path(cdict)
 
         try:
             upload_dataset(

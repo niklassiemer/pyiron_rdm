@@ -1,5 +1,18 @@
 import hashlib
 
+SUPPORTED_INSTANCES = {
+    "bam": {
+        "mapping_path": "pyiron_rdm.ob_cfg_bam",
+        "OT_path": "pyiron_rdm.ob_OT_bam",
+        "requires_s3": False,
+    },
+    "sfb1394": {
+        "mapping_path": "pyiron_rdm.ob_cfg_sfb1394",
+        "OT_path": "pyiron_rdm.ob_OT_sfb1394",
+        "requires_s3": True,
+    },
+}
+
 
 def classic_structure(
     pr, structure, structure_name, options, is_init_struct: bool, init_structure=None
@@ -92,10 +105,16 @@ def classic_murn(murn_job, export_env_file):
         export_env(murn_job.path)
 
     from pyiron_rdm.concept_dict import (
+        process_general_job,
         process_lammps_job,
         process_murnaghan_job,
         process_vasp_job,
     )
+
+    _child_job_processors = [
+        ("lammps", process_lammps_job),
+        ("vasp", process_vasp_job),
+    ]
 
     child_jobs_cdict = []
     for job in murn_job.iter_jobs():
@@ -103,10 +122,18 @@ def classic_murn(murn_job, export_env_file):
             shutil.copy(
                 murn_job.path + "_environment.yml", job.path + "_environment.yml"
             )
-        if "lammps" in job.to_dict()["TYPE"]:
-            child_cdict = process_lammps_job(job)
-        else:  # vasp
-            child_cdict = process_vasp_job(job)
+        job_type = job.to_dict()["TYPE"]
+        for pattern, processor in _child_job_processors:
+            if pattern in job_type:
+                child_cdict = processor(job)
+                break
+        else:
+            raise ValueError(
+                f"Child job type {job_type!r} is not supported in Murnaghan workflow."
+                " Supported child job types: "
+                + ", ".join(p for p, _ in _child_job_processors)
+                + "."
+            )
         child_jobs_cdict.append(child_cdict)
 
     job_cdict = process_murnaghan_job(murn_job)
@@ -162,23 +189,21 @@ def validate_upload_options(ot_module: str, options: dict):
 def openbis_login(
     url, username=None, password=None, token=None, instance="bam", s3_config_path=None
 ):
-    if instance != "bam" and instance != "sfb1394":
+    if instance not in SUPPORTED_INSTANCES:
         raise ValueError(
-            f"This script only supports upload to 'bam' and 'sfb1394' instances,\
-                         {instance} not supported."
+            f"This script only supports upload to {list(SUPPORTED_INSTANCES.keys())} instances,"
+            f" {instance!r} not supported."
         )
 
-    if instance == "bam":
-        mapping_path = "pyiron_rdm.ob_cfg_bam"
-        OT_path = "pyiron_rdm.ob_OT_bam"
+    instance_cfg = SUPPORTED_INSTANCES[instance]
+    if instance_cfg["requires_s3"] and not s3_config_path:
+        raise ValueError(
+            f"s3_config_path must be provided when uploading to {instance!r} instance."
+        )
+    mapping_path = instance_cfg["mapping_path"]
+    OT_path = instance_cfg["OT_path"]
+    if not instance_cfg["requires_s3"]:
         s3_config_path = None
-    elif instance == "sfb1394":
-        if not s3_config_path:
-            raise ValueError(
-                "s3_config_path must be provided when uploading to sfb1394 instance."
-            )
-        mapping_path = "pyiron_rdm.ob_cfg_sfb1394"
-        OT_path = "pyiron_rdm.ob_OT_sfb1394"
 
     from pyiron_rdm.ob_upload import openbis_login as ob_login
 
@@ -217,13 +242,19 @@ def get_cdicts_to_validate(
     cdicts_to_validate["structure"] = struct_dict
 
     job_type = job.to_dict()["TYPE"]
-    if "lammps" in job_type:
-        job_cdict = classic_lammps(job, export_env_file=export_env_file)
-        cdicts_to_validate["job"] = job_cdict
 
-    elif "vasp" in job_type:
-        job_cdict = classic_vasp(job, export_env_file=export_env_file)
-        cdicts_to_validate["job"] = job_cdict
+    _simple_job_handlers = [
+        ("lammps", classic_lammps),
+        ("vasp", classic_vasp),
+    ]
+
+    job_handler = next(
+        (handler for pattern, handler in _simple_job_handlers if pattern in job_type),
+        None,
+    )
+
+    if job_handler is not None:
+        cdicts_to_validate["job"] = job_handler(job, export_env_file=export_env_file)
 
     elif "murn" in job_type:
         job_cdict, child_jobs_cdict = classic_murn(job, export_env_file=export_env_file)
